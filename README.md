@@ -269,22 +269,6 @@ IoT-Based-Obstacle-Avoiding-Robot/
 
 ---
 
-# 🖼 Project Images
-
-## 📌 Block Diagram
-(Add image here)
-
-## 📌 Circuit Diagram
-(Add image here)
-
-## 📌 Robot Prototype
-(Add image here)
-
-## 📌 ESP32-CAM Output
-(Add image here)
-
-## 📌 Hardware Setup
-(Add image here)
 
 ---
 
