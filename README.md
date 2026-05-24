@@ -125,7 +125,8 @@ ESP32-CAM captures live video and streams it through WiFi using an internal web 
 ```text
 Sense → Process → Decide → Act
 
-📡 IoT Communication
+
+##📡 IoT Communication
 
 The ESP32 module enables wireless communication and IoT functionality using WiFi technology.
 
