@@ -1,0 +1,683 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <Servo.h>
+
+// ========================================================
+// WiFi Credentials
+// ========================================================
+
+const char* ssid = "YOUR_WIFI_NAME";
+const char* password = "YOUR_WIFI_PASSWORD";
+
+// ========================================================
+// ESP32-CAM Stream URL
+// ========================================================
+
+#define CAM_IP "http://YOUR_ESP32_CAM_IP/"
+
+// ========================================================
+// Web Server
+// ========================================================
+
+ESP8266WebServer server(80);
+
+// ========================================================
+// Motor Pins
+// ========================================================
+
+#define IN1 D1
+#define IN2 D2
+#define IN3 D3
+#define IN4 D4
+
+// ========================================================
+// Ultrasonic Sensor Pins
+// ========================================================
+
+#define TRIG D5
+#define ECHO D6
+
+// ========================================================
+// Servo Motor
+// ========================================================
+
+Servo servo;
+
+#define SERVO_PIN D7
+
+int center = 90;
+int leftAngle = 180;
+int rightAngle = 0;
+
+// ========================================================
+// Global Variables
+// ========================================================
+
+bool autoMode = false;
+
+int motorSpeed = 800;
+
+// ========================================================
+// Distance Measurement
+// ========================================================
+
+long getDistance() {
+
+  digitalWrite(TRIG, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+
+  digitalWrite(TRIG, LOW);
+
+  long duration = pulseIn(ECHO, HIGH, 30000);
+
+  if (duration == 0) {
+    return 999;
+  }
+
+  return duration * 0.034 / 2;
+}
+
+// ========================================================
+// Motor Functions
+// ========================================================
+
+void forward() {
+
+  servo.write(center);
+
+  analogWrite(IN1, motorSpeed);
+  analogWrite(IN2, 0);
+
+  analogWrite(IN3, motorSpeed);
+  analogWrite(IN4, 0);
+}
+
+void backward() {
+
+  analogWrite(IN1, 0);
+  analogWrite(IN2, motorSpeed);
+
+  analogWrite(IN3, 0);
+  analogWrite(IN4, motorSpeed);
+}
+
+void stopM() {
+
+  analogWrite(IN1, 0);
+  analogWrite(IN2, 0);
+
+  analogWrite(IN3, 0);
+  analogWrite(IN4, 0);
+}
+
+// ========================================================
+// Turning Functions
+// ========================================================
+
+void turnLeft90() {
+
+  analogWrite(IN1, 0);
+  analogWrite(IN2, motorSpeed);
+
+  analogWrite(IN3, motorSpeed);
+  analogWrite(IN4, 0);
+
+  delay(400);
+
+  stopM();
+}
+
+void turnRight90() {
+
+  analogWrite(IN1, motorSpeed);
+  analogWrite(IN2, 0);
+
+  analogWrite(IN3, 0);
+  analogWrite(IN4, motorSpeed);
+
+  delay(400);
+
+  stopM();
+}
+
+// ========================================================
+// Autonomous Navigation
+// ========================================================
+
+void autoRun() {
+
+  long front = getDistance();
+
+  if (front < 40) {
+
+    stopM();
+
+    delay(100);
+
+    backward();
+
+    delay(300);
+
+    stopM();
+
+    // Scan Left
+
+    servo.write(leftAngle);
+
+    delay(400);
+
+    long leftDist = getDistance();
+
+    // Scan Right
+
+    servo.write(rightAngle);
+
+    delay(400);
+
+    long rightDist = getDistance();
+
+    // Return Center
+
+    servo.write(center);
+
+    delay(200);
+
+    // Decision Making
+
+    if (leftDist < 25 && rightDist < 25) {
+
+      backward();
+
+      delay(500);
+
+      stopM();
+
+      if (leftDist > rightDist) {
+
+        turnLeft90();
+
+      } else {
+
+        turnRight90();
+      }
+
+    } else if (leftDist < rightDist) {
+
+      turnRight90();
+
+    } else {
+
+      turnLeft90();
+    }
+
+  } else {
+
+    forward();
+  }
+}
+
+// ========================================================
+// Speed Control
+// ========================================================
+
+void handleSpeed() {
+
+  if (server.hasArg("val")) {
+
+    motorSpeed = server.arg("val").toInt();
+
+    if (motorSpeed < 0) {
+      motorSpeed = 0;
+    }
+
+    if (motorSpeed > 1023) {
+      motorSpeed = 1023;
+    }
+  }
+
+  server.send(200, "text/plain", "OK");
+}
+
+// ========================================================
+// Send Robot Data
+// ========================================================
+
+void handleData() {
+
+  long d = getDistance();
+
+  String json =
+    "{\"d\":" + String(d) +
+    ",\"m\":\"" + String(autoMode ? "Auto" : "Manual") +
+    "\",\"s\":" + String(motorSpeed) + "}";
+
+  server.send(200, "application/json", json);
+}
+
+// ========================================================
+// HTML Web Dashboard
+// ========================================================
+
+String html = R"rawliteral(
+
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="UTF-8">
+
+<title>IoT Robot Controller</title>
+
+<style>
+
+*{
+  box-sizing:border-box;
+}
+
+body{
+  margin:0;
+  min-height:100vh;
+  font-family:Arial;
+  background:#0f2027;
+  color:white;
+  padding:18px;
+}
+
+.wrapper{
+  width:100%;
+  max-width:1100px;
+  margin:auto;
+  display:grid;
+  grid-template-columns:1.2fr 1fr;
+  gap:20px;
+}
+
+.panel{
+  background:rgba(255,255,255,0.08);
+  border-radius:24px;
+  padding:20px;
+}
+
+.title{
+  font-size:28px;
+  font-weight:bold;
+}
+
+.camera{
+  width:100%;
+  aspect-ratio:4/3;
+  overflow:hidden;
+  border-radius:20px;
+  margin-top:15px;
+}
+
+.camera img{
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+
+.controls{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:14px;
+  margin-top:25px;
+}
+
+.btn{
+  border:none;
+  border-radius:20px;
+  height:80px;
+  font-size:28px;
+  cursor:pointer;
+  color:white;
+}
+
+.forward{
+  background:#16a34a;
+}
+
+.back{
+  background:#0284c7;
+}
+
+.leftBtn{
+  background:#eab308;
+  color:black;
+}
+
+.rightBtn{
+  background:#eab308;
+  color:black;
+}
+
+.stop{
+  background:#dc2626;
+}
+
+.modeBtn{
+  width:100%;
+  margin-top:20px;
+  padding:15px;
+  border:none;
+  border-radius:18px;
+  background:#7c3aed;
+  color:white;
+  font-size:18px;
+  cursor:pointer;
+}
+
+.card{
+  background:rgba(255,255,255,0.08);
+  padding:15px;
+  border-radius:18px;
+  text-align:center;
+  margin-top:15px;
+}
+
+.slider{
+  width:100%;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="wrapper">
+
+<div class="panel">
+
+<div class="title">ESP32-CAM Live Stream</div>
+
+<div class="camera">
+<img id="cam" src="%CAMIP%">
+</div>
+
+<div class="card">
+<h2 id="dist">Distance : -- cm</h2>
+<h2 id="mode">Mode : Manual</h2>
+<h2 id="speedView">Speed : 800</h2>
+</div>
+
+</div>
+
+<div class="panel">
+
+<div class="title">Robot Controller</div>
+
+<div class="controls">
+
+<div></div>
+<button class="btn forward" onclick="sendCmd('/f')">↑</button>
+<div></div>
+
+<button class="btn leftBtn" onclick="sendCmd('/l')">←</button>
+<button class="btn stop" onclick="sendCmd('/s')">■</button>
+<button class="btn rightBtn" onclick="sendCmd('/r')">→</button>
+
+<div></div>
+<button class="btn back" onclick="sendCmd('/b')">↓</button>
+<div></div>
+
+</div>
+
+<button class="modeBtn" onclick="sendCmd('/mode')">
+Switch Auto / Manual
+</button>
+
+<div class="card">
+
+<h3>Motor Speed</h3>
+
+<input
+id="speedSlider"
+class="slider"
+type="range"
+min="0"
+max="1023"
+value="800"
+oninput="updateSpeed(this.value)"
+>
+
+<h2 id="speedVal">800</h2>
+
+</div>
+
+</div>
+
+</div>
+
+<script>
+
+function sendCmd(path){
+
+  fetch(path).catch(()=>{});
+}
+
+function updateSpeed(val){
+
+  document.getElementById('speedVal').innerHTML = val;
+
+  fetch('/speed?val=' + val).catch(()=>{});
+}
+
+setInterval(()=>{
+
+  fetch('/data')
+
+  .then(r=>r.json())
+
+  .then(d=>{
+
+    document.getElementById('dist').innerHTML =
+      'Distance : ' + d.d + ' cm';
+
+    document.getElementById('mode').innerHTML =
+      'Mode : ' + d.m;
+
+    document.getElementById('speedView').innerHTML =
+      'Speed : ' + d.s;
+
+    document.getElementById('speedVal').innerHTML =
+      d.s;
+
+    document.getElementById('speedSlider').value =
+      d.s;
+  })
+
+  .catch(()=>{});
+
+},1000);
+
+</script>
+
+</body>
+</html>
+
+)rawliteral";
+
+// ========================================================
+// Web Handlers
+// ========================================================
+
+void handleRoot() {
+
+  String page = html;
+
+  page.replace("%CAMIP%", CAM_IP);
+
+  server.send(200, "text/html", page);
+}
+
+void handleF() {
+
+  if (!autoMode) {
+
+    long d = getDistance();
+
+    if (d < 30) {
+      stopM();
+    } else {
+      forward();
+    }
+  }
+
+  server.send(200, "text/plain", "OK");
+}
+
+void handleB() {
+
+  if (!autoMode) {
+    backward();
+  }
+
+  server.send(200, "text/plain", "OK");
+}
+
+void handleL() {
+
+  if (!autoMode) {
+
+    long d = getDistance();
+
+    if (d < 30) {
+      stopM();
+    } else {
+      turnLeft90();
+    }
+  }
+
+  server.send(200, "text/plain", "OK");
+}
+
+void handleR() {
+
+  if (!autoMode) {
+
+    long d = getDistance();
+
+    if (d < 30) {
+      stopM();
+    } else {
+      turnRight90();
+    }
+  }
+
+  server.send(200, "text/plain", "OK");
+}
+
+void handleS() {
+
+  stopM();
+
+  server.send(200, "text/plain", "OK");
+}
+
+void handleMode() {
+
+  autoMode = !autoMode;
+
+  stopM();
+
+  server.send(200, "text/plain", "OK");
+}
+
+// ========================================================
+// Setup
+// ========================================================
+
+void setup() {
+
+  Serial.begin(115200);
+
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+
+  pinMode(TRIG, OUTPUT);
+
+  pinMode(ECHO, INPUT);
+
+  servo.attach(SERVO_PIN, 500, 2400);
+
+  servo.write(center);
+
+  // WiFi Connection
+
+  WiFi.begin(ssid, password);
+
+  Serial.print("Connecting to WiFi");
+
+  while (WiFi.status() != WL_CONNECTED) {
+
+    delay(500);
+
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi Connected");
+
+  Serial.println(WiFi.localIP());
+
+  // Server Routes
+
+  server.on("/", handleRoot);
+
+  server.on("/f", handleF);
+  server.on("/b", handleB);
+
+  server.on("/l", handleL);
+  server.on("/r", handleR);
+
+  server.on("/s", handleS);
+
+  server.on("/mode", handleMode);
+
+  server.on("/speed", handleSpeed);
+
+  server.on("/data", handleData);
+
+  // Start Server
+
+  server.begin();
+
+  Serial.println("Web Server Started");
+}
+
+// ========================================================
+// Main Loop
+// ========================================================
+
+void loop() {
+
+  server.handleClient();
+
+  if (!autoMode) {
+
+    servo.write(center);
+
+    long d = getDistance();
+
+    if (d < 30) {
+
+      stopM();
+    }
+  }
+
+  if (autoMode) {
+
+    autoRun();
+
+    servo.write(center);
+  }
+}
